@@ -1,0 +1,413 @@
+@isTest
+public class MktpOpportunityServiceTest {
+
+    @testSetup
+    // generate base re-usable test data
+    // Setting data here gives additional limits in addition to startTest() context
+    static void setUp() {
+        OpportunityTriggerNonBypassableHandler.BYPASS_LTV_COMP_QUEUING = true;
+        OpportunityTriggerNonBypassableHandler.BYPASS_TM_EXECUTION_QUEUING = true;
+        TMOwnerAssignmentServiceConstant.shouldStopTriggerExecutionForTM = true;
+
+        List<String> objectAPINameList = new List<String>{'Account','Contact'};
+        List<String> userIdList = new List<String>{UserInfo.getUserId()};
+        TestDataTriggerControlUtil.manageTestObjectTriggers(objectAPINameList,userIdList, true);
+        System.debug('MktpOpportunityServiceTest :setUp beginning '+Limits.getQueries());
+        // Create new account
+        List<Account> actsList = new List<Account>();
+        Account acc1 = MktpSbqqTestDataFactory.createAccount('Test Account 1','7788778899',null);
+
+        actsList.add(acc1);
+        insert actsList;
+        System.debug('MktpOpportunityServiceTest :setUp after actsList insert '+Limits.getQueries());
+
+        //Create new Contact
+        List<Contact> contacts = new List<Contact>();
+        Contact contact = MktpSbqqTestDataFactory.createContact('Last Name 1',1,'lastName1',acc1.Id);
+        contacts.add(contact);
+        insert contacts;
+        System.debug('MktpOpportunityServiceTest :setUp after contacts insert '+Limits.getQueries());
+
+        // Create User with sys admin profile
+        Id profileId = MktpSbqqTestDataFactory.createProfile().Id;
+        List<User> uList = new List<User>();
+        user u1 = MktpSbqqTestDataFactory.createUser(profileId,'testEmail@testorg.com','Last1');
+        // Second user to swith the context based on run as for the data
+        user u2 = MktpSbqqTestDataFactory.createUser(profileId,'testEmail2@testorg.com','Last2');
+        uList.add(u1);
+        uList.add(u2);
+        insert uList;
+        System.debug('MktpOpportunityServiceTest :setUp after uList insert '+Limits.getQueries());
+
+        //Create opportunity for net new
+        Id interalRecordTypeId =
+                Schema.SObjectType.Opportunity.getRecordTypeInfosByDeveloperName()
+                        .get('Internal_Opptys').getRecordTypeId();
+        List<Opportunity> opportunities = new List<Opportunity>();
+        Opportunity opp1 = MktpSbqqTestDataFactory.createOpportunity('Test Oppty1',acc1.Id,u1.Id,'New',MktpConstants.MKTP_CPQ_QUOTE_TYPE,
+                interalRecordTypeId,false,null,null,false,null,null,null);
+        Opportunity renewal_oppty = new Opportunity(Name = 'OpportunityName1', SBQQ__Renewal__c = true, StageName = OpportunityConstants.STAGE_NAME_OPENQUALIFIED,
+                CloseDate = Date.newInstance(2029, 10, 26), AccountId = acc1.Id, Quote_Type__c = 'Steelbrick Quote', SBQQ__Contracted__c = false,
+                OwnerId = UserInfo.getUserId()  );
+        opportunities.add(opp1);
+        opportunities.add(renewal_oppty);
+        insert opportunities;
+        
+        System.debug('MktpOpportunityServiceTest :setUp after opportunities insert '+Limits.getQueries());
+
+        // Create products
+        List<Product2> products = new List<Product2>();
+        // To instantiate schedule only once in the test context
+        Id discountScheduleId = MktpSbqqTestDataFactory.createDiscountSchedule().Id ;
+        // Create primary product
+        Product2 primaryProduct1 = MktpSbqqTestDataFactory.createProduct('Primary Product 1',null,'TEST-SKU-1',
+                100,'Fixed Price',12,'Renewable','RedLock','RedLock',
+                discountScheduleId);
+		primaryProduct1.Internal_SKU_Name__c='TEST-SKU-1';
+        // Create support product
+        Product2 PotProduct1 = MktpSbqqTestDataFactory.createProduct('PotProduct 1',null,'TEST-SKU-2',
+                100,'Percent Of Total',12,'Renewable','RedLock','RedLock',
+                discountScheduleId);
+		PotProduct1.Internal_SKU_Name__c='TEST-SKU-2';
+        products.add(primaryProduct1);
+        products.add(PotProduct1);
+        insert products;
+        System.debug('MktpOpportunityServiceTest :setUp after products insert '+Limits.getQueries());
+
+        //Create Custom PriceBook
+        Pricebook2 customPB = MktpSbqqTestDataFactory.createPricebook(System.Label.MKTP_Pricebook_Name);
+
+        //Create pricebook entries
+        //Standard entries
+        List<PricebookEntry> pricebookEntries = new List<PricebookEntry>();
+        PricebookEntry standardPrimaryEntry1 = MktpSbqqTestDataFactory.createPricebookEntry(10,primaryProduct1.Id,Test.getStandardPricebookId());
+        PricebookEntry standardSupportEntry1 = MktpSbqqTestDataFactory.createPricebookEntry(10,PotProduct1.Id,Test.getStandardPricebookId());
+        //Custom entries
+        PricebookEntry customPrimaryEntry1 = MktpSbqqTestDataFactory.createPricebookEntry(10,primaryProduct1.Id,customPB.Id);
+        PricebookEntry customSupportEntry1 = MktpSbqqTestDataFactory.createPricebookEntry(10,PotProduct1.Id,customPB.Id);
+        pricebookEntries.add(standardPrimaryEntry1);
+        pricebookEntries.add(standardSupportEntry1);
+        pricebookEntries.add(customPrimaryEntry1);
+        pricebookEntries.add(customSupportEntry1);
+        insert pricebookEntries;
+
+        System.debug('MktpOpportunityServiceTest :setUp after pricebookEntries insert '+Limits.getQueries());
+
+        List<OpportunityLineItem> oppLineItems = new List<OpportunityLineItem>();
+        OpportunityLineItem oli4 = new OpportunityLineItem();
+        oli4.OpportunityId = renewal_oppty.Id;
+        oli4.CPQ_List_Price__c = 100.0;
+        oli4.CPQ_Discount__c = 10.0;
+        oli4.Quoter_EffectiveTermDays__c = 180.0;
+        oli4.Quoter_EffectiveTerm__c = 6.0;
+        oli4.Quantity = 1;
+        oli4.Product2Id = primaryProduct1.Id;
+        oli4.PricebookEntryId = standardPrimaryEntry1.Id;
+        oli4.TotalPrice = 1 * standardPrimaryEntry1.UnitPrice;
+        oppLineItems.add(oli4);
+        OpportunityLineItem oli5 = new OpportunityLineItem();
+        oli5.OpportunityId = renewal_oppty.Id;
+        oli5.CPQ_List_Price__c = 100.0;
+        oli5.CPQ_Discount__c = 10.0;
+        oli5.Quoter_EffectiveTermDays__c = 180.0;
+        oli5.Quoter_EffectiveTerm__c = 6.0;
+        oli5.Quantity = 1;
+        oli5.Product2Id = PotProduct1.Id;
+        oli5.PricebookEntryId = standardSupportEntry1.Id;
+        oli5.TotalPrice = 1 * standardSupportEntry1.UnitPrice;
+        oppLineItems.add(oli5);
+        insert oppLineItems;
+
+        //Create non marketplace Direct customer Quote -- Bill to and ship to parties are same
+        SBQQ__Quote__c quote = MktpSbqqTestDataFactory.createNewQuote(opp1.Id,'',contact.Id,contact.id,acc1.Id,acc1.Id,true,
+        'Pending',customPB.Id,false,null);
+        insert quote;
+        System.debug('MktpOpportunityServiceTest :setUp after quote insert '+Limits.getQueries());
+
+        //Create Quote lines
+        List<SBQQ__QuoteLine__c> quoteLines = new List<SBQQ__QuoteLine__c>();
+        SBQQ__QuoteLine__c primaryQuoteLine1 = MktpSbqqTestDataFactory.createNewQuoteLine(quote.Id,'',100,10,
+                customPrimaryEntry1.Id,primaryProduct1.Id,false,System.today(),'One-Time','',null,null);
+        SBQQ__QuoteLine__c supportQuoteLine1 = MktpSbqqTestDataFactory.createNewQuoteLine(quote.Id,'',20,1,
+                customSupportEntry1.Id,PotProduct1.Id,false,System.today(),'One-Time','',null,null);
+        quoteLines.add(primaryQuoteLine1);
+        quoteLines.add(supportQuoteLine1);
+        insert quoteLines;
+        System.debug('MktpOpportunityServiceTest :setUp after quoteLines insert '+Limits.getQueries());
+
+        //Create Billing Order
+        Order order = MktpSbqqTestDataFactory.createOrder(acc1.Id,'Draft',String.valueof(Date.Today().Day()),'By Subscription End Date',
+                customPB.Id,quote.Id,false);
+        insert order;
+        System.debug('MktpOpportunityServiceTest :setUp after order insert '+Limits.getQueries());
+
+        // Create Billing Order Products
+        List<OrderItem> orderItems =  new List<OrderItem>();
+        OrderItem primaryOrderItem1 = MktpSbqqTestDataFactory.createOrderProductFromQuoteLine(order.Id,primaryQuoteLine1);
+        OrderItem supportOrderItem1 = MktpSbqqTestDataFactory.createOrderProductFromQuoteLine(order.Id,supportQuoteLine1);
+        orderItems.add(primaryOrderItem1);
+        orderItems.add(supportOrderItem1);
+        insert orderItems;
+        System.debug('MktpOpportunityServiceTest :setUp after orderItems insert '+Limits.getQueries());
+
+        //Create Contract
+        Contract contract = MktpSbqqTestDataFactory.createContract(opp1.Id,acc1.Id,quote.Id,acc1.Id,'Draft',12,System.today(),
+                System.today().addMonths(12),order.Id,false,customPB.Id);
+        insert Contract;
+        System.debug('MktpOpportunityServiceTest :setUp after Contract insert '+Limits.getQueries());
+
+        //Create subscriptions
+        List<SBQQ__Subscription__c> subscriptions = new List<SBQQ__Subscription__c>();
+        SBQQ__Subscription__c primarySubscription1 = MktpSbqqTestDataFactory.createSubscriptionFromOrderProduct(acc1.Id,contract.Id,primaryOrderItem1);
+        SBQQ__Subscription__c supportSubscription1 = MktpSbqqTestDataFactory.createSubscriptionFromOrderProduct(acc1.Id,contract.Id,supportOrderItem1);
+        primarySubscription1.SBQQ__ListPrice__c = 100;
+        supportSubscription1.SBQQ__ListPrice__c = 20;
+        subscriptions.add(primarySubscription1);
+        subscriptions.add(supportSubscription1);
+        insert subscriptions;
+        System.debug('MktpOpportunityServiceTest :setUp after subscriptions insert '+Limits.getQueries());
+        System.debug('MktpOpportunityServiceTest :setUp ending '+Limits.getQueries());
+
+        contract.SBQQ__RenewalOpportunity__c = renewal_oppty.Id;
+        update contract;
+
+        renewal_oppty.SBQQ__RenewedContract__c = contract.Id;
+        update renewal_oppty;
+    }
+    
+    public class testContext{
+        public List<Account> accRecs;
+        public List<Contact> contactRecs;
+        public List<Opportunity> opptyRecs;
+        public List<Contract> contractRecs;
+        public testContext(){
+            accRecs = [SELECT Id FROM Account WHERE CreatedDate=Today AND Name = 'Test Account 1'];
+            contactRecs = [SELECT ID FROM Contact WHERE AccountID IN : accRecs];
+            opptyRecs = [SELECT ID,SBQQ__RenewedContract__c,SBQQ__Renewal__c FROM Opportunity WHERE AccountId IN:accRecs];
+            contractRecs = [SELECT ID FROM Contract WHERE SBQQ__Opportunity__c IN:opptyRecs];
+        }
+    }
+    
+    @isTest
+    private static void oppServiceDispatcherTest(){
+        Test.startTest();
+        User u = [SELECT Id, Name From User where email = 'testEmail@testorg.com' LIMIT 1];
+        System.debug('MktpOpportunityServiceTest :oppServiceDispatcherTest '+Limits.getQueries());
+            System.debug('MktpOpportunityServiceTest :oppServiceDispatcherTest: run as begining '+Limits.getQueries());
+
+            Contract contract = [SELECT Id,SBQQ__Opportunity__c,SBQQ__Quote__c,SBQQ__RenewalOpportunity__c,AccountId FROM Contract where SBQQ__Opportunity__r.Name = 'Test Oppty1'];
+            Id renewalRecordTypeId =
+                    Schema.SObjectType.Opportunity.getRecordTypeInfosByDeveloperName()
+                            .get('SAP_Renewal').getRecordTypeId();
+            List<Opportunity> opportunities = new List<Opportunity>();
+            System.debug('MktpOpportunityServiceTest :oppServiceDispatcherTest: run as ending '+Limits.getQueries());
+
+        
+        System.debug('MktpOpportunityServiceTest :oppServiceDispatcherTest: startTest '+Limits.getQueries());
+        Opportunity opp1 = MktpSbqqTestDataFactory.createOpportunity('Renew Oppty1', contract.AccountId, u.Id, 'Renewal', 'Steelbrick Renewals',
+                renewalRecordTypeId, true, contract.Id, null, false, null, null, null);
+        opportunities.add(opp1);
+        insert opportunities;
+        System.debug('MktpOpportunityServiceTest :oppServiceDispatcherTest: stopTest '+Limits.getQueries());
+        Test.stopTest();
+    }
+
+    @isTest
+    private static void validatePartnerChangeTest(){
+        Test.startTest();
+        Opportunity opportunity = [SELECT ID,AccountId,Second_Tier_Reseller__c, IsClosed, Push_Counter__c, StageName, CloseDate  FROM Opportunity WHERE Name ='Test Oppty1'];
+        insert New OpportunityTriggerSettings__c(Name=MktpOpportunityService.SB_THEATRE_CHECK,Fire__c=true);
+
+        List<Account> actsList = TestDataUtil.createAccounts(2, true, new Map<String, String> {'name' => 'ActName','Billing_Street__c' => '123 St',
+                'Billing_City__c' => 'Santa Clara', 'Billing_State__c' => 'CA', 'Billing_Country__c' => 'Germany', 'Billing_Zip__c' => '95054', 'Theatre__c' => 'INTL'});
+        System.debug('actsList-------->'+actsList);
+        PAN_Distributors__c pd = new PAN_Distributors__c();
+        pd.Name = 'In Distributer';
+        pd.Account_Id__c = actsList[0].id;
+        pd.Country__c = 'Germany';
+        pd.Theater__c = 'INTL';
+        insert pd;
+
+        // ensure to move the oppty update into the startTest() context to avoid governor limits issues
+       
+        try{
+            opportunity.Second_Tier_Reseller__c = opportunity.AccountId;
+            opportunity.Distributor__c = pd.Id;
+            opportunity.Registered_Partner__c = pd.Account_Id__c;
+            update opportunity;
+        }catch(Exception e){
+            System.debug('Exception Message'+e.getMessage());
+        }
+
+        Test.stopTest();
+    }
+
+
+    @isTest
+    private static void setOpportunityProductTypeNewTest(){
+        Test.startTest();
+        Opportunity opportunity = [SELECT ID,AccountId,Second_Tier_Reseller__c, IsClosed, Push_Counter__c, StageName, CloseDate  FROM Opportunity WHERE Name ='Test Oppty1'];
+        SBQQ__Quote__c quote = [SELECT Id,Name,PO_Number__c FROM SBQQ__Quote__c WHERE SBQQ__Opportunity2__c =: opportunity.Id];
+        // ensure to move the oppty update into the startTest() context to avoid governor limits issues
+        
+        quote.PO_Number__c = 'TEST PO';
+        try {
+            System.debug('Updating the quote');
+            update quote;
+        } catch(Exception e) {
+            System.debug('Exception updating quote: ' + e.getMessage());
+            System.debug('LineNumber: ' + e.getLineNumber());
+            System.debug('StackTraceString: ' + e.getStackTraceString());
+        }
+        Test.stopTest();
+    }
+
+    @isTest
+    private static void setOpportunityProductTypeRenewTest(){
+       Test.startTest();
+        User u = [SELECT Id, Name From User where email = 'testEmail@testorg.com' LIMIT 1];
+        Contract contract = [SELECT Id,SBQQ__Opportunity__c,SBQQ__Quote__c,SBQQ__Quote__r.SBQQ__PrimaryContact__c ,
+                SBQQ__RenewalOpportunity__c,AccountId ,SBQQ__Quote__r.SBQQ__PriceBook__c
+        FROM Contract where SBQQ__Opportunity__r.Name = 'Test Oppty1'];
+        Contact contact = [SELECT Id FROM Contact WHERE LastName = 'Last Name 1'];
+        Id renewalRecordTypeId =Schema.SObjectType.Opportunity.getRecordTypeInfosByDeveloperName().get('SAP_Renewal').getRecordTypeId();
+        List<Opportunity> opportunities = new List<Opportunity>();
+
+        System.debug('MktpOpportunityServiceTest :setOpportunityProductTypeRenewTest: run as ending '+Limits.getQueries());
+
+        
+        System.debug('MktpOpportunityServiceTest :setOpportunityProductTypeRenewTest: startTest '+Limits.getQueries());
+        Opportunity opp1 = MktpSbqqTestDataFactory.createOpportunity('Renew Oppty1', contract.AccountId, u.Id, 'Renewal', 'Steelbrick Renewals',
+                renewalRecordTypeId, true, contract.Id, null, false, null, null, null);
+        opportunities.add(opp1);
+        insert opportunities;
+        opp1.StageName = '10 - Closed - Won';
+        opp1.CloseDate = System.today();
+        update opp1;
+
+        Test.stopTest();
+        
+    }
+
+    @isTest
+    private static void setOpportunityProductTypeAmendTest(){
+        //TMOwnerAssignmentServiceConstant.shouldStopTriggerExecutionForTM = true;
+		Test.startTest();
+        User u = [SELECT Id, Name From User where email = 'testEmail@testorg.com' LIMIT 1];
+        Contract contract = [SELECT Id,SBQQ__Opportunity__c,SBQQ__Quote__c,SBQQ__Quote__r.SBQQ__PrimaryContact__c ,
+                SBQQ__RenewalOpportunity__c,AccountId ,SBQQ__Quote__r.SBQQ__PriceBook__c,Status,StatusCode
+        FROM Contract where SBQQ__Opportunity__r.Name = 'Test Oppty1'];
+        Contact contact = [SELECT Id FROM Contact WHERE LastName = 'Last Name 1'];
+
+        Id interalRecordTypeId = Schema.SObjectType.Opportunity.getRecordTypeInfosByDeveloperName().get('Internal_Opptys').getRecordTypeId();        
+        List<Opportunity> opportunities = new List<Opportunity>();
+
+        System.debug('MktpOpportunityServiceTest :setOpportunityProductTypeRenewTest: run as ending '+Limits.getQueries());
+
+        
+        System.debug('MktpOpportunityServiceTest :setOpportunityProductTypeRenewTest: startTest '+Limits.getQueries());
+        Opportunity opp1 = MktpSbqqTestDataFactory.createOpportunity('Amend Oppty1', contract.AccountId, u.Id, 'Expand', 'Steelbrick Quote',
+                interalRecordTypeId, true, contract.Id, null, false, null, null, null);
+        opportunities.add(opp1);
+        insert opportunities;
+        System.debug('MktpOpportunityServiceTest :setOpportunityProductTypeRenewTest: stopTest '+Limits.getQueries());
+
+        List<PricebookEntry> pricebookEntries = [SELECT Id, Pricebook2Id, Product2Id,Product2.ProductCode
+        FROM PricebookEntry WHERE Pricebook2.Name = :System.Label.MKTP_Pricebook_Name AND
+        Product2.ProductCode IN ('TEST-SKU-1','TEST-SKU-2')];
+
+        //Create non marketplace Direct customer Quote -- Bill to and ship to parties are same
+        List<SBQQ__Quote__c> quotes = new List<SBQQ__Quote__c>();
+        SBQQ__Quote__c quote = MktpSbqqTestDataFactory.createNewQuote(opp1.Id,'',contact.Id,contact.Id,contract.AccountId,contract.AccountId,true,
+                'Pending',pricebookEntries[0].Pricebook2Id,false,null);
+        SBQQ__Quote__c quote2 = MktpSbqqTestDataFactory.createNewQuote(opp1.Id,'',contact.Id,contact.Id,contract.AccountId,contract.AccountId,false,
+                'Pending',pricebookEntries[0].Pricebook2Id,false,null);
+
+        quotes.add(quote2);
+        quotes.add(quote);
+        insert quotes;
+
+
+        Map<String,PricebookEntry> skuPricebookEntriesMap = new Map<String,PricebookEntry>();
+        for(PricebookEntry entry : pricebookEntries){
+            skuPricebookEntriesMap.put(entry.Product2.ProductCode,entry);
+        }
+        List<SBQQ__Subscription__c> subscriptions = [SELECT Id, Name, SBQQ__Product__c,SBQQ__Product__r.ProductCode
+        FROM SBQQ__Subscription__c where SBQQ__Contract__c=:contract.Id ];
+        Map<String,SBQQ__Subscription__c> skuSubscriptionMap = new Map<String,SBQQ__Subscription__c>();
+
+        for(SBQQ__Subscription__c sub : subscriptions){
+            skuSubscriptionMap.put(sub.SBQQ__Product__r.ProductCode,sub);
+        }
+        //Create Quote lines
+        List<SBQQ__QuoteLine__c> quoteLines = new List<SBQQ__QuoteLine__c>();
+        SBQQ__QuoteLine__c primaryQuoteLine1 = MktpSbqqTestDataFactory.createNewQuoteLine(quote.Id,'',100,10,
+                skuPricebookEntriesMap.get('TEST-SKU-1').Id,skuPricebookEntriesMap.get('TEST-SKU-1').Product2Id,false,System.today(),'One-Time','',null,skuSubscriptionMap.get('TEST-SKU-1').Id);
+        SBQQ__QuoteLine__c supportQuoteLine1 = MktpSbqqTestDataFactory.createNewQuoteLine(quote.Id,'',20,1,
+                skuPricebookEntriesMap.get('TEST-SKU-2').Id,skuPricebookEntriesMap.get('TEST-SKU-2').Product2Id,false,System.today(),'One-Time','',null,skuSubscriptionMap.get('TEST-SKU-2').Id);
+        SBQQ__QuoteLine__c primaryQuoteLine2 = MktpSbqqTestDataFactory.createNewQuoteLine(quote2.Id,'',100,10,
+                skuPricebookEntriesMap.get('TEST-SKU-1').Id,skuPricebookEntriesMap.get('TEST-SKU-1').Product2Id,false,System.today(),'One-Time','',null,skuSubscriptionMap.get('TEST-SKU-1').Id);
+        SBQQ__QuoteLine__c supportQuoteLine2 = MktpSbqqTestDataFactory.createNewQuoteLine(quote2.Id,'',20,1,
+                skuPricebookEntriesMap.get('TEST-SKU-2').Id,skuPricebookEntriesMap.get('TEST-SKU-2').Product2Id,false,System.today(),'One-Time','',null,skuSubscriptionMap.get('TEST-SKU-2').Id);
+        quoteLines.add(primaryQuoteLine1);
+        quoteLines.add(supportQuoteLine1);
+        quoteLines.add(primaryQuoteLine2);
+        quoteLines.add(supportQuoteLine2);
+
+        insert quoteLines;
+
+
+        opp1.StageName = '10 - Closed - Won';
+        opp1.CloseDate = System.today();
+        update opp1;
+
+        Test.stopTest();
+    }
+    
+    private static testMethod void testCreateOpportunitySharing(){
+        testContext context = new testContext();
+        Id uId = UserInfo.getUserId();
+        Id interalRecordTypeId =
+        Schema.SObjectType.Opportunity.getRecordTypeInfosByDeveloperName()
+                        .get('Internal_Opptys').getRecordTypeId();
+        Test.startTest();
+        Opportunity opp1 = MktpSbqqTestDataFactory.createOpportunity('Test Oppty1',context.accRecs[0].Id,uId,'New',MktpConstants.MKTP_CPQ_QUOTE_TYPE,
+              interalRecordTypeId,false,null,null,false,uId,null,null);
+        insert opp1;
+        MktpOpportunityService.createOpportunitySharing(new List<Id>{opp1.Id});
+        Test.stopTest();
+    }
+    
+    private static testMethod void testsetMktpRenewalOpportunity(){
+        Test.startTest();
+        testContext context = new testContext();
+        List<Id> lstContractIds = new List<Id>();
+        for(Contract c: context.contractRecs){
+            lstContractIds.add(c.Id);
+        }
+        
+            MktpOpportunityService.setMktpRenewalOpportunity(context.opptyRecs,lstContractIds);
+        Test.stopTest();
+    }
+
+    @IsTest
+    static void testRenewalForecastOpptyAmt() {
+		test.startTest();
+        Contract origContract = [SELECT Id, SBQQ__RenewalOpportunity__c FROM Contract Limit 1];
+        Opportunity[] opp = [SELECT Id,
+                Name,
+                SBQQ__RenewedContract__c,
+                SBQQ__RenewedContract__r.ContractNumber,
+                SBQQ__RenewedContract__r.EndDate,
+                Account.Name
+        FROM Opportunity
+        WHERE Id = :origContract.SBQQ__RenewalOpportunity__c
+        AND IsClosed = false
+        AND Number_of_SB_Quotes__c = 0
+        ];
+        
+        MktpOpportunityService.renewalForecastOpptyAmt(opp, false);
+        Test.stopTest();
+    }
+
+}
